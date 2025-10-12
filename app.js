@@ -21,14 +21,24 @@ __onReady(() => {
   const bgLayer = $("#bgLayer");
   const bgShade = $("#bgShade");
 
+  // ===== Server-Sync =====
+  // API-Basis dynamisch (funktioniert im Root ODER Unterordner)
+  const API_BASE = new URL('./api/', window.location.href).toString(); // endet mit /api/
+  const SERVER_SYNC = true;
+
   // storage keys
   const LS = {
     tiles: "customTiles.v1",
     bg: "dashboard.bg.v1",
     theme: "dashboard.theme.v1",
     wol: "dashboard.wol.devices.v1",
-    wolLast: "dashboard.wol.lastIndex.v1"
+    wolLast: "dashboard.wol.lastIndex.v1",
+    clientId: "dashboard.clientId.v1"
   };
+
+  // ---- feste, gemeinsame ID für alle Clients (für Cross-PC Nutzung) ----
+  const CLIENT_ID = 'riveria-shared'; // bei Bedarf anpassen (nur a-z, 0-9, - _)
+  localStorage.setItem(LS.clientId, CLIENT_ID);
 
   // defaults
   const DEFAULT_TILES = [
@@ -40,7 +50,7 @@ __onReady(() => {
   const DEFAULT_BG = { type:"gradient", dataUrl:"", size:"cover", position:"center center", blur:0, dim:30 };
   const DEFAULT_THEME = { accent:"#8c7bff", accent2:"#27d3a2", bg1:"#0f1226", bg2:"#171a3a", topbarColor:"#0e1135", topbarOpacity:65 };
 
-  // state
+  // state (lokal aus LS laden)
   let tiles = load(LS.tiles, DEFAULT_TILES);
   const bgState = load(LS.bg, DEFAULT_BG);
   const theme = load(LS.theme, DEFAULT_THEME);
@@ -48,12 +58,19 @@ __onReady(() => {
 
   // helpers
   function load(key, def){ try{ const raw=localStorage.getItem(key); return raw? JSON.parse(raw) : structuredClone(def);}catch{ return structuredClone(def);} }
-  function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+  function save(key, val){
+    localStorage.setItem(key, JSON.stringify(val));
+    if (key===LS.tiles || key===LS.bg || key===LS.theme || key===LS.wol) {
+      saveServerDebounced();
+    }
+  }
+  function saveSilently(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
   function ensureUrl(u){ if(!/^https?:\/\//i.test(u) && !/^ftp:\/\/\//i.test(u)) return "https://" + u; return u; }
   function faviconFor(u){ try{ const host=new URL(ensureUrl(u)).hostname; return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`; }catch{ return ""; } }
   function hexToRgb(hex){ const m=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex); return m?{r:parseInt(m[1],16),g:parseInt(m[2],16),b:parseInt(m[3],16)}:null; }
+  function debounce(fn, ms){ let t=null; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
 
-  // scale image to ~128px
+  // ---- Image helpers ----
   function resizeToIconDataUrl(file, max = 128){
     return new Promise((resolve, reject)=>{
       const reader = new FileReader();
@@ -76,8 +93,62 @@ __onReady(() => {
       reader.readAsDataURL(file);
     });
   }
+  function fileToDataUrlResized(file, maxW=1920, maxH=1080){
+    return new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onerror=reject;
+      reader.onload=()=>{ const img=new Image(); img.onload=()=>{
+        const r=Math.min(maxW/img.width, maxH/img.height, 1);
+        if(r<1){ const c=document.createElement("canvas"); c.width=Math.round(img.width*r); c.height=Math.round(img.height*r);
+          c.getContext("2d").drawImage(img,0,0,c.width,c.height); resolve(c.toDataURL("image/jpeg",0.9)); }
+        else resolve(reader.result);
+      }; img.onerror=reject; img.src=reader.result; };
+      reader.readAsDataURL(file);
+    });
+  }
 
-  // theme / background
+  // ---- Server: save/load ----
+  function saveServer(){
+    if(!SERVER_SYNC) return;
+    const payload = { clientId: CLIENT_ID, data: { tiles, bg: bgState, theme, wol: wolDevices } };
+    fetch(`${API_BASE}save.php`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(payload)
+    }).catch(err => console.warn("saveServer() failed (offline/HTTP):", err));
+  }
+  const saveServerDebounced = debounce(saveServer, 300);
+
+  function loadFromServer(){
+    if(!SERVER_SYNC) return Promise.resolve(false);
+    return fetch(`${API_BASE}load.php?clientId=${encodeURIComponent(CLIENT_ID)}`, { credentials: "same-origin" })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP "+r.status)))
+      .then(j => {
+        if(j && j.exists && j.data){
+          tiles = j.data.tiles ?? tiles;
+          Object.assign(bgState, j.data.bg ?? {});
+          Object.assign(theme, j.data.theme ?? {});
+          wolDevices = j.data.wol ?? wolDevices;
+
+          // lokale Kopie updaten
+          saveSilently(LS.tiles, tiles);
+          saveSilently(LS.bg, bgState);
+          saveSilently(LS.theme, theme);
+          saveSilently(LS.wol, wolDevices);
+
+          applyTheme(theme);
+          applyBackground(bgState);
+          render();
+          renderWolList(); // falls schon offen
+          return true;
+        }
+        return false;
+      })
+      .catch(err => { console.warn("loadFromServer() failed:", err); return false; });
+  }
+
+  // ===== Theme / Background =====
   function applyTheme(t){
     const root=document.documentElement;
     root.style.setProperty('--accent', t.accent);
@@ -107,7 +178,7 @@ __onReady(() => {
   applyTheme(theme);
   applyBackground(bgState);
 
-  // render tiles
+  // ===== Tiles rendern =====
   function render(){
     grid.innerHTML = "";
     tiles.forEach((t, idx) => {
@@ -125,12 +196,10 @@ __onReady(() => {
       pin.addEventListener("click", (ev)=>{ ev.preventDefault(); ev.stopPropagation(); openEdit(idx); });
       tile.appendChild(pin);
 
-      // favicon / custom icon
       const fav = document.createElement("div"); fav.className="favicon";
       const img = document.createElement("img"); img.alt="";
       const fb = document.createElement("div"); fb.className="fallback"; fb.textContent = initials(t.title);
 
-      // pick source
       let src = "";
       if (t.iconType === "url" && t.icon) src = t.icon;
       else if (t.iconType === "upload" && t.icon) src = t.icon;
@@ -168,7 +237,7 @@ __onReady(() => {
     return chars || "?";
   }
 
-  // clock
+  // ===== Clock =====
   function updateClock(){
     const d = new Date();
     $("#dateTxt").textContent = d.toLocaleDateString(undefined, {weekday:"short", day:"2-digit", month:"short"});
@@ -176,8 +245,8 @@ __onReady(() => {
   }
   setInterval(updateClock,1000); updateClock();
 
-  // search
-  $("#searchForm").addEventListener("submit", (e)=>{
+  // ===== Suche =====
+  $("#searchForm")?.addEventListener("submit", (e)=>{
     e.preventDefault();
     const q = $("#searchInput").value.trim();
     if(!q) return;
@@ -186,14 +255,14 @@ __onReady(() => {
     window.open(target, "_blank", "noopener");
   });
 
-  // add/edit tiles
+  // ===== Icon-Handling (Upload/URL/Auto) =====
   const iconPreviewImg = $("#iconPreviewImg");
   const iconPreviewFallback = $("#iconPreviewFallback");
   const iconUrlInput = $("#tileIconUrl");
   const iconFileInput = $("#tileIconFile");
   const iconPickBtn = document.getElementById("iconPickBtn");
 
-  $("#addTileBtn").addEventListener("click", ()=>{
+  $("#addTileBtn")?.addEventListener("click", ()=>{
     $("#tileModalTitle").textContent="Kachel hinzufügen";
     $("#tileIndex").value="";
     $("#tileTitle").value=""; $("#tileUrl").value=""; $("#tileDesc").value="";
@@ -218,45 +287,30 @@ __onReady(() => {
     openModal(tileModal);
   }
 
-  // icon source controls
   Array.from(document.getElementsByName("iconSrc")).forEach(r=>{
     r.addEventListener("change", ()=>{
       const v = getIconSource();
       iconUrlInput.classList.toggle("hidden", v!=="url");
       iconFileInput.classList.toggle("hidden", v!=="upload");
       if (iconPickBtn) iconPickBtn.style.display = (v==="upload") ? "inline-block" : "none";
-
       if(v==="auto"){ setIconPreview("", $("#tileTitle").value); }
       if(v==="url" && iconUrlInput.value){ setIconPreview(iconUrlInput.value, $("#tileTitle").value); }
-      if(v==="upload"){
-        // Versuch, den Picker automatisch zu öffnen (manche Sandboxes blocken das -> Button als Fallback)
-        requestAnimationFrame(()=>{ try{ iconFileInput.click(); }catch{} });
-      }
+      if(v==="upload"){ requestAnimationFrame(()=>{ try{ iconFileInput.click(); }catch{} }); }
     });
   });
-
-  iconUrlInput.addEventListener("input", ()=>{
-    const v = iconUrlInput.value.trim();
-    setIconPreview(v, $("#tileTitle").value);
+  iconUrlInput?.addEventListener("input", ()=>{
+    setIconPreview(iconUrlInput.value.trim(), $("#tileTitle").value);
   });
-
-  iconFileInput.addEventListener("change", async ()=>{
+  iconFileInput?.addEventListener("change", async ()=>{
     const f = iconFileInput.files[0];
     if(!f) return;
     try{
       const dataUrl = await resizeToIconDataUrl(f, 128);
       setIconPreview(dataUrl, $("#tileTitle").value);
-      iconFileInput.dataset.dataUrl = dataUrl; // später beim Speichern verwenden
-    }catch{
-      alert("Icon konnte nicht verarbeitet werden.");
-    }
+      iconFileInput.dataset.dataUrl = dataUrl;
+    }catch{ alert("Icon konnte nicht verarbeitet werden."); }
   });
-
-  if (iconPickBtn) {
-    iconPickBtn.addEventListener("click", () => {
-      iconFileInput.click();
-    });
-  }
+  iconPickBtn?.addEventListener("click", () => iconFileInput.click());
 
   function getIconSource(){
     const r = document.querySelector('input[name="iconSrc"]:checked');
@@ -265,14 +319,11 @@ __onReady(() => {
   function setIconSource(v){
     const radios = document.getElementsByName("iconSrc");
     Array.from(radios).forEach(r=> r.checked = (r.value===v));
-
     const showUrl = v === "url";
     const showUpload = v === "upload";
-
     iconUrlInput.classList.toggle("hidden", !showUrl);
     iconFileInput.classList.toggle("hidden", !showUpload);
     if (iconPickBtn) iconPickBtn.style.display = showUpload ? "inline-block" : "none";
-
     if (showUpload) {
       requestAnimationFrame(() => { try { iconFileInput.click(); } catch {} });
     } else {
@@ -281,6 +332,7 @@ __onReady(() => {
     }
   }
   function setIconPreview(src, title){
+    if(!iconPreviewImg || !iconPreviewFallback) return;
     if(src){
       iconPreviewImg.src = src;
       iconPreviewImg.style.display="block";
@@ -293,11 +345,11 @@ __onReady(() => {
     }
   }
 
-  $("#tileTitle").addEventListener("input", ()=>{
-    if(!iconPreviewImg.src) setIconPreview("", $("#tileTitle").value);
+  $("#tileTitle")?.addEventListener("input", ()=>{
+    if(!iconPreviewImg?.src) setIconPreview("", $("#tileTitle").value);
   });
 
-  $("#saveTileBtn").addEventListener("click", ()=>{
+  $("#saveTileBtn")?.addEventListener("click", ()=>{
     const idx = $("#tileIndex").value;
     const title = $("#tileTitle").value.trim();
     const url   = $("#tileUrl").value.trim();
@@ -315,7 +367,6 @@ __onReady(() => {
     }
 
     const item = { title, url, desc, iconType, icon };
-
     if(idx===""){ tiles.push(item); }
     else{ tiles[Number(idx)] = item; }
 
@@ -324,14 +375,15 @@ __onReady(() => {
     closeModal(tileModal);
   });
 
-  // Delete (2-Klick)
+  // ===== Delete (2-Klick) =====
   let deleteArmedTimer = null;
   function resetDeleteButtonState(){
     const btn = $("#deleteTileBtn");
+    if(!btn) return;
     btn.dataset.armed="false"; btn.textContent="Löschen"; btn.classList.remove("acc");
     if(deleteArmedTimer){ clearTimeout(deleteArmedTimer); deleteArmedTimer=null; }
   }
-  $("#deleteTileBtn").addEventListener("click", ()=>{
+  $("#deleteTileBtn")?.addEventListener("click", ()=>{
     const btn = $("#deleteTileBtn");
     const armed = btn.dataset.armed==="true";
     const idx = $("#tileIndex").value;
@@ -340,16 +392,97 @@ __onReady(() => {
       deleteArmedTimer = setTimeout(resetDeleteButtonState, 5000);
     }else{
       if(idx==="") return;
-      tiles.splice(Number(idx),1); save(LS.tiles, tiles); render(); closeModal(tileModal); resetDeleteButtonState();
+      tiles.splice(Number(idx),1);
+      save(LS.tiles, tiles);
+      render();
+      closeModal(tileModal);
+      resetDeleteButtonState();
     }
   });
 
-  // WOL basics (Geräteverwaltung ist in HTML/CSS vorbereitet – hier nur Öffnen/Schliessen)
-  $("#wolBtn").addEventListener("click", ()=> openModal(wolModal));
-  $("#wolCloseBtn").addEventListener("click", ()=> closeModal(wolModal));
+  // ===== WOL (Geräteverwaltung + Senden) =====
+  const wolItemsEl = $("#wolItems");
+  const wolIndexEl = $("#wolIndex");
+  const wolStatusEl= $("#wolStatus");
 
-  // Background
-  $("#bgBtn").addEventListener("click", ()=>{
+  function renderWolList(activeIdx=-1){
+    if (!wolItemsEl) return;
+    wolItemsEl.innerHTML = "";
+    statefulList().forEach((d,i)=>{
+      const item=document.createElement("div");
+      item.className="wol-item"+(i===activeIdx?" active":"");
+      const name=document.createElement("div"); name.className="name"; name.textContent=d.name||"(ohne Namen)";
+      const meta=document.createElement("div"); meta.className="meta"; meta.textContent=`${d.mac||""} • ${d.address||"broadcast"} • :${d.port||9}`;
+      item.appendChild(name); item.appendChild(meta);
+      item.addEventListener("click", ()=> selectWolIndex(i));
+      wolItemsEl.appendChild(item);
+    });
+  }
+  function statefulList(){ return wolDevices || []; }
+
+  function selectWolIndex(i){
+    wolIndexEl.value=String(i);
+    const d=wolDevices[i]||{name:"",mac:"",address:"",port:9,endpoint: defaultWolEndpoint()};
+    $("#wolName").value=d.name||"";
+    $("#wolMac").value=d.mac||"";
+    $("#wolAddress").value=d.address||"";
+    $("#wolPort").value=d.port!=null?String(d.port):"9";
+    $("#wolEndpoint").value=d.endpoint||defaultWolEndpoint();
+    Array.from(wolItemsEl.children).forEach((el,idx)=> el.classList.toggle("active", idx===i));
+    if (wolStatusEl) wolStatusEl.textContent="";
+  }
+  function defaultWolEndpoint(){ return new URL('wol.php', API_BASE).toString(); }
+
+  $("#wolBtn")?.addEventListener("click", ()=>{
+    renderWolList(0);
+    if(wolDevices.length){ selectWolIndex(0); }
+    openModal(wolModal);
+  });
+  $("#wolCloseBtn")?.addEventListener("click", ()=> closeModal(wolModal));
+  $("#wolNewBtn")?.addEventListener("click", ()=>{
+    wolIndexEl.value="";
+    $("#wolName").value=""; $("#wolMac").value=""; $("#wolAddress").value=""; $("#wolPort").value="9";
+    $("#wolEndpoint").value= wolDevices[0]?.endpoint || defaultWolEndpoint();
+    Array.from(wolItemsEl?.children||[]).forEach(el=> el.classList.remove("active"));
+    if (wolStatusEl) wolStatusEl.textContent="Neues Gerät – speichern nicht vergessen.";
+  });
+  $("#wolSaveBtn")?.addEventListener("click", ()=>{
+    const entry={ 
+      name:$("#wolName").value.trim(),
+      mac:$("#wolMac").value.trim(),
+      address:$("#wolAddress").value.trim(),
+      port: $("#wolPort").value.trim()?Number($("#wolPort").value.trim()):9,
+      endpoint: ($("#wolEndpoint").value.trim()||defaultWolEndpoint())
+    };
+    if(!entry.mac){ if(wolStatusEl) wolStatusEl.textContent="MAC fehlt."; return; }
+    const idxStr=wolIndexEl.value;
+    if(idxStr===""){ wolDevices.push(entry); renderWolList(wolDevices.length-1); selectWolIndex(wolDevices.length-1); if(wolStatusEl) wolStatusEl.textContent="Gespeichert."; }
+    else{ const i=Number(idxStr); wolDevices[i]=entry; renderWolList(i); selectWolIndex(i); if(wolStatusEl) wolStatusEl.textContent="Aktualisiert."; }
+    save(LS.wol, wolDevices);
+  });
+  $("#wolDeleteBtn")?.addEventListener("click", ()=>{
+    const idxStr=wolIndexEl.value; if(idxStr===""){ if(wolStatusEl) wolStatusEl.textContent="Kein Gerät ausgewählt."; return; }
+    wolDevices.splice(Number(idxStr),1);
+    save(LS.wol, wolDevices);
+    renderWolList();
+    if(wolDevices.length){ selectWolIndex(0);} else { $("#wolNewBtn").click(); }
+    if(wolStatusEl) wolStatusEl.textContent="Gelöscht.";
+  });
+  $("#sendWolBtn")?.addEventListener("click", async ()=>{
+    const mac=$("#wolMac").value.trim(); if(!mac){ if(wolStatusEl) wolStatusEl.textContent="MAC fehlt."; return; }
+    const address=$("#wolAddress").value.trim();
+    const port=$("#wolPort").value.trim();
+    const endpoint=($("#wolEndpoint").value.trim()||defaultWolEndpoint());
+    if(wolStatusEl) wolStatusEl.textContent="Sende Magic Packet …";
+    try{
+      const res=await fetch(endpoint,{ method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ mac, address: address||undefined, port: port?Number(port):undefined }) });
+      if(!res.ok){ const txt=await res.text(); if(wolStatusEl) wolStatusEl.textContent="Fehler: "+txt; }
+      else { if(wolStatusEl) wolStatusEl.textContent="Magic Packet gesendet ✅"; }
+    }catch{ if(wolStatusEl) wolStatusEl.textContent="Verbindung fehlgeschlagen – läuft die WOL-API?"; }
+  });
+
+  // ===== Background =====
+  $("#bgBtn")?.addEventListener("click", ()=>{
     $("#bgSize").value=bgState.size||"cover";
     $("#bgPos").value=bgState.position||"center center";
     $("#bgBlur").value=bgState.blur||0; $("#bgBlurVal").textContent=String(bgState.blur||0);
@@ -357,57 +490,61 @@ __onReady(() => {
     $("#bgFile").value="";
     openModal(bgModal);
   });
-  $("#bgCloseBtn").addEventListener("click", ()=> closeModal(bgModal));
-  $("#bgCancelBtn").addEventListener("click", ()=> closeModal(bgModal));
-  $("#bgBlur").addEventListener("input", e => $("#bgBlurVal").textContent=e.target.value);
-  $("#bgDim").addEventListener("input", e => $("#bgDimVal").textContent=e.target.value);
-  $("#bgSaveBtn").addEventListener("click", async ()=>{
+  $("#bgCloseBtn")?.addEventListener("click", ()=> closeModal(bgModal));
+  $("#bgCancelBtn")?.addEventListener("click", ()=> closeModal(bgModal));
+  $("#bgBlur")?.addEventListener("input", e => $("#bgBlurVal").textContent=e.target.value);
+  $("#bgDim")?.addEventListener("input", e => $("#bgDimVal").textContent=e.target.value);
+  $("#bgSaveBtn")?.addEventListener("click", async ()=>{
     const size=$("#bgSize").value, position=$("#bgPos").value;
     const blur=Number($("#bgBlur").value), dim=Number($("#bgDim").value);
     const file=$("#bgFile").files[0];
     const next={...bgState, type:"image", size, position, blur, dim};
-    try{ if(file){ next.dataUrl = await (async file=>{
-            const maxW=1920, maxH=1080;
-            const reader=new FileReader();
-            const data=await new Promise((res,rej)=>{ reader.onerror=rej; reader.onload=()=>res(reader.result); reader.readAsDataURL(file); });
-            const img=new Image();
-            await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src=data; });
-            const r=Math.min(maxW/img.width, maxH/img.height, 1);
-            if(r<1){ const c=document.createElement("canvas"); c.width=Math.round(img.width*r); c.height=Math.round(img.height*r);
-              c.getContext("2d").drawImage(img,0,0,c.width,c.height); return c.toDataURL("image/jpeg",0.9); }
-            return data;
-          })(file); }
-      Object.assign(bgState,next); save(LS.bg, bgState); applyBackground(bgState); closeModal(bgModal);
+    try{
+      if(file){ next.dataUrl = await fileToDataUrlResized(file,1920,1080); }
+      Object.assign(bgState,next);
+      save(LS.bg, bgState);
+      applyBackground(bgState);
+      closeModal(bgModal);
     }catch{ alert("Bild konnte nicht verarbeitet werden."); }
   });
-  $("#bgResetBtn").addEventListener("click", ()=>{
-    const def = {...DEFAULT_BG}; Object.assign(bgState, def); save(LS.bg, bgState); applyBackground(bgState); closeModal(bgModal);
+  $("#bgResetBtn")?.addEventListener("click", ()=>{
+    const def = {...DEFAULT_BG};
+    Object.assign(bgState, def);
+    save(LS.bg, bgState);
+    applyBackground(bgState);
+    closeModal(bgModal);
   });
 
-  // Theme
-  $("#themeBtn").addEventListener("click", ()=>{
+  // ===== Theme =====
+  $("#themeBtn")?.addEventListener("click", ()=>{
     $("#thAccent").value=theme.accent; $("#thAccent2").value=theme.accent2;
     $("#thBg1").value=theme.bg1; $("#thBg2").value=theme.bg2;
     $("#thTopbarColor").value=theme.topbarColor;
     $("#thTopbarOpacity").value=theme.topbarOpacity??65; $("#thTopbarOpacityVal").textContent=String(theme.topbarOpacity??65);
     openModal(themeModal);
   });
-  $("#themeCloseBtn").addEventListener("click", ()=> closeModal(themeModal));
-  $("#themeCancelBtn").addEventListener("click", ()=> closeModal(themeModal));
-  $("#thTopbarOpacity").addEventListener("input", e => $("#thTopbarOpacityVal").textContent=e.target.value);
-  $("#themeSaveBtn").addEventListener("click", ()=>{
+  $("#themeCloseBtn")?.addEventListener("click", ()=> closeModal(themeModal));
+  $("#themeCancelBtn")?.addEventListener("click", ()=> closeModal(themeModal));
+  $("#thTopbarOpacity")?.addEventListener("input", e => $("#thTopbarOpacityVal").textContent=e.target.value);
+  $("#themeSaveBtn")?.addEventListener("click", ()=>{
     theme.accent=$("#thAccent").value;
     theme.accent2=$("#thAccent2").value;
     theme.bg1=$("#thBg1").value;
     theme.bg2=$("#thBg2").value;
     theme.topbarColor=$("#thTopbarColor").value;
     theme.topbarOpacity=Number($("#thTopbarOpacity").value);
-    save(LS.theme, theme); applyTheme(theme); closeModal(themeModal);
+    save(LS.theme, theme);
+    applyTheme(theme);
+    closeModal(themeModal);
   });
-  $("#themeResetBtn").addEventListener("click", ()=>{
-    Object.assign(theme, DEFAULT_THEME); save(LS.theme, theme); applyTheme(theme); closeModal(themeModal);
+  $("#themeResetBtn")?.addEventListener("click", ()=>{
+    Object.assign(theme, DEFAULT_THEME);
+    save(LS.theme, theme);
+    applyTheme(theme);
+    closeModal(themeModal);
   });
 
-  // init
+  // ===== init =====
   render();
+  loadFromServer(); // vom Server nachladen (falls vorhanden)
 });
