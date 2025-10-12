@@ -4,6 +4,31 @@ Ein modernes, an **Heimdall** angelehntes Start-Dashboard mit Kacheln, Uhrzeit, 
 
 ---
 
+## 🚀 Quick Install (Einzeiler)
+
+**Variante 1 – `curl` (empfohlen):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Riveria-IT/riveria-it_my_dashboard_1.0/main/install_dashboard.sh | sudo bash
+```
+
+**Variante 2 – `wget`:**
+```bash
+wget -qO- https://raw.githubusercontent.com/Riveria-IT/riveria-it_my_dashboard_1.0/main/install_dashboard.sh | sudo bash
+```
+
+**Optional – mit Parametern (Branch/Webroot setzen):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Riveria-IT/riveria-it_my_dashboard_1.0/main/install_dashboard.sh \
+| sudo env REPO_BRANCH=main WEBROOT=/var/www/html bash
+```
+
+Nach der Installation im Browser öffnen:
+```
+http://<server-ip>/
+```
+
+---
+
 ## 📁 Projektstruktur
 
 ```
