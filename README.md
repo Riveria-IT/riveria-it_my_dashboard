@@ -1,4 +1,4 @@
-# 🧭 Riveria Dashboard
+# 🧭 Riveria-it Dashboard
 
 Ein modernes, an **Heimdall** angelehntes Start-Dashboard mit Kacheln, Uhrzeit, Theme-System, Hintergrundbild, **Wake-on-LAN (manuell verwaltbar)** und persistentem **Server-Speicher über PHP/Apache**.
 
@@ -273,7 +273,7 @@ tar czf dashboard-backup-$(date +%F).tar.gz /var/www/html/api/data
 ## 🧡 9. Credits
 
 **Projektidee:** inspiriert von *Heimdall*  
-**Entwicklung:** Riveria Online / Riveria IT  
+**Entwicklung:** Riveria IT  
 **Frontend:** HTML + CSS + Vanilla JS  
 **Backend:** PHP (JSON-Filesystem-Storage)  
 **Design:** Modern Glass UI mit Blur, Schatten & Farbverlauf  
