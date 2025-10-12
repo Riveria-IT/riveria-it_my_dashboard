@@ -1,6 +1,6 @@
 # 🧭 Riveria Dashboard
 
-Ein modernes, an **Heimdall** angelehntes Start-Dashboard mit Kacheln, Uhrzeit, Theme-System, Hintergrundbild, **Wake-on-LAN** und persistentem **Server-Speicher über PHP/Apache**.
+Ein modernes, an **Heimdall** angelehntes Start-Dashboard mit Kacheln, Uhrzeit, Theme-System, Hintergrundbild, **Wake-on-LAN (manuell verwaltbar)** und persistentem **Server-Speicher über PHP/Apache**.
 
 ---
 
@@ -44,7 +44,7 @@ Damit mehrere Benutzer (z. B. im LAN) dasselbe Dashboard teilen:
 ```bash
 # Apache & PHP installieren
 sudo apt update
-sudo apt install -y apache2 php libapache2-mod-php
+sudo apt install -y apache2 php libapache2-mod-php php-sockets
 sudo a2enmod headers rewrite
 sudo systemctl restart apache2
 ```
@@ -99,15 +99,65 @@ curl -X POST "http://localhost/api/save.php"   -H "Content-Type: application/jso
 - Taskbar & Kacheln übernehmen denselben Farbton  
 - Einstellungen bleiben dauerhaft gespeichert  
 
-### 🔹 Wake-on-LAN
-- Geräte (Name, MAC, Broadcast, Port, Endpoint) manuell hinzufügen  
+### 🔹 Wake-on-LAN (vollständig integriert)
+- Geräte manuell hinzufügen, bearbeiten oder löschen  
+- Speichert pro Gerät:  
+  - Name  
+  - MAC-Adresse  
+  - Broadcast-Adresse (z. B. `255.255.255.255` oder `192.168.x.255`)  
+  - Port (Standard 9)  
+  - Endpoint (z. B. `http://<server-ip>/api/wol.php` oder Flask-API)  
+- Jedes Gerät kann seinen **eigenen Endpoint** verwenden  
 - Sendet **Magic Packet** über REST-API  
+- Alle Geräte werden **lokal und serverseitig** gespeichert
 
 ---
 
 ## 💡 5. Wake-on-LAN API (Optionen)
 
-### 🐍 Variante A – Python / Flask
+### 🧩 Variante A – PHP (empfohlen)
+Kein zusätzlicher Dienst nötig, läuft direkt über Apache.
+
+```bash
+sudo apt install -y php-sockets
+sudo systemctl restart apache2
+```
+
+**Datei:** `/var/www/html/api/wol.php`
+```php
+<?php
+header('Content-Type: application/json; charset=utf-8');
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); echo json_encode(['error'=>'Method not allowed']); exit; }
+$in = json_decode(file_get_contents('php://input'), true) ?: [];
+$mac = $in['mac'] ?? '';
+$addr = $in['address'] ?? '255.255.255.255';
+$port = intval($in['port'] ?? 9);
+
+if (!preg_match('/^([0-9A-Fa-f]{2}[:\-]){5}([0-9A-Fa-f]{2})$/', $mac)) {
+  http_response_code(400); echo json_encode(['error'=>'invalid mac']); exit;
+}
+$mac = str_replace([':', '-'], '', $mac);
+$data = '';
+for ($i=0; $i<6; $i++) $data .= chr(0xFF);
+for ($i=0; $i<16; $i++) $data .= pack('H12', $mac);
+
+$socket = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+socket_set_option($socket, SOL_SOCKET, SO_BROADCAST, 1);
+$ok = socket_sendto($socket, $data, strlen($data), 0, $addr, $port);
+socket_close($socket);
+
+if ($ok === false) { http_response_code(500); echo json_encode(['error'=>'send failed']); exit; }
+echo json_encode(['ok'=>true]);
+```
+📡 **Endpoint im Dashboard:**  
+```
+http://<server-ip>/api/wol.php
+```
+
+---
+
+### 🐍 Variante B – Python / Flask (optional)
+Für Nutzer, die lieber einen separaten Dienst verwenden möchten:
 ```bash
 sudo apt install -y python3 python3-venv
 python3 -m venv ~/wolapi
@@ -148,53 +198,9 @@ source ~/wolapi/bin/activate
 python ~/wolapi/wol_api.py
 ```
 
-📡 Endpoint im Dashboard:  
+📡 **Endpoint im Dashboard:**  
 ```
 http://<server-ip>:8787/wol
-```
-
----
-
-### 🧩 Variante B – PHP (ohne Python)
-```bash
-sudo apt install -y php-sockets
-sudo systemctl restart apache2
-```
-
-**Datei:** `/var/www/html/api/wol.php`
-```php
-<?php
-header('Content-Type: application/json');
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-  http_response_code(405);
-  echo json_encode(['error' => 'Method not allowed']);
-  exit;
-}
-
-$in = json_decode(file_get_contents('php://input'), true);
-$mac = $in['mac'] ?? '';
-$addr = $in['address'] ?? '255.255.255.255';
-$port = intval($in['port'] ?? 9);
-
-if (!preg_match('/^([0-9A-Fa-f]{2}[:\-]){5}([0-9A-Fa-f]{2})$/', $mac)) {
-  http_response_code(400);
-  echo json_encode(['error' => 'invalid mac']);
-  exit;
-}
-
-$mac = str_replace([':', '-'], '', $mac);
-$data = str_repeat(chr(0xFF), 6) . str_repeat(pack('H12', $mac), 16);
-
-$sock = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-socket_set_option($sock, SOL_SOCKET, SO_BROADCAST, 1);
-$ok = socket_sendto($sock, $data, strlen($data), 0, $addr, $port);
-socket_close($sock);
-
-echo json_encode(['ok' => $ok !== false]);
-```
-📡 Endpoint im Dashboard:  
-```
-http://<server-ip>/api/wol.php
 ```
 
 ---
@@ -218,7 +224,7 @@ sudo certbot --apache
 
 ## 💾 7. Backup
 
-Alle Daten liegen unter:
+Alle gespeicherten Einstellungen und WOL-Geräte liegen unter:
 ```
 /var/www/html/api/data/
 ```
@@ -232,9 +238,10 @@ tar czf dashboard-backup-$(date +%F).tar.gz /var/www/html/api/data
 
 ## 🧠 8. Tipps
 
-- Für **LAN-Geräte** empfiehlt sich der **PHP-WOL-Endpoint**, da kein extra Dienst läuft.  
+- Für **LAN-Geräte** empfiehlt sich der **PHP-WOL-Endpoint**, da kein separater Dienst läuft.  
+- Jedes Gerät kann einen eigenen **Endpoint** definieren.  
 - Im **Theme-Dialog** kannst du Topbar- und Kachel-Farben per Farbpalette abstimmen.  
-- Alle Einstellungen werden **sowohl lokal (Browser)** als auch **serverseitig (JSON)** gespeichert.
+- Alle Einstellungen werden **lokal (Browser)** und **serverseitig (JSON)** gespeichert.
 
 ---
 
