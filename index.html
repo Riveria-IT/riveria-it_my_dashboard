@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mein Start-Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- Bild-Hintergrund-Layer + Abdunkelung -->
+  <div id="bgLayer" class="bg-layer"></div>
+  <div id="bgShade" class="bg-shade"></div>
+
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div>Dashboard</div>
+      </div>
+
+      <div class="search">
+        <form id="searchForm">
+          <input id="searchInput" type="text" placeholder="Websuche oder URL …" autocomplete="off" />
+          <button class="go" aria-label="Suchen" type="submit">→</button>
+        </form>
+      </div>
+
+      <div class="controls">
+        <button class="btn ghost" id="addTileBtn" type="button">＋ Kachel</button>
+        <button class="btn ghost" id="bgBtn" type="button">Hintergrund</button>
+        <button class="btn ghost" id="themeBtn" type="button">Theme</button>
+        <button class="btn" id="wolBtn" type="button">Wake-on-LAN</button>
+        <div class="clock" id="clock">
+          <small id="dateTxt">–</small> <span id="timeTxt">--:--</span>
+        </div>
+      </div>
+    </div>
+
+    <main class="grid" id="grid"></main>
+    <div class="footer">Lokale Konfiguration (localStorage). Kachel-Menü über „…“ oben rechts.</div>
+  </div>
+
+  <!-- Tile Modal -->
+  <dialog id="tileModal">
+    <div class="modal-head">
+      <strong id="tileModalTitle">Kachel hinzufügen</strong>
+      <button class="btn ghost" id="tileCloseBtn" type="button">Schliessen</button>
+    </div>
+
+    <form id="tileForm" class="modal-body">
+      <input type="hidden" id="tileIndex" />
+
+      <div class="field">
+        <label for="tileTitle">Titel</label>
+        <input id="tileTitle" type="text" placeholder="z. B. Google" required />
+      </div>
+
+      <div class="field">
+        <label for="tileUrl">URL</label>
+        <input id="tileUrl" type="url" placeholder="https://…" required />
+      </div>
+
+      <div class="field">
+        <label for="tileDesc">Beschreibung (optional)</label>
+        <input id="tileDesc" type="text" placeholder="Kurzbeschreibung" />
+      </div>
+
+      <!-- ICON SECTION -->
+      <div class="field">
+        <label>Icon</label>
+        <div class="icon-row">
+          <div class="icon-preview">
+            <div id="iconPreview" class="fav-preview">
+              <span id="iconPreviewFallback">?</span>
+              <img id="iconPreviewImg" alt="" />
+            </div>
+          </div>
+          <div class="icon-controls">
+            <div class="icon-source">
+              <label><input type="radio" name="iconSrc" value="auto" checked> Auto (Favicon)</label>
+              <label><input type="radio" name="iconSrc" value="url"> Bild-URL</label>
+              <label><input type="radio" name="iconSrc" value="upload"> Upload</label>
+            </div>
+            <div class="icon-inputs">
+              <input id="tileIconUrl" type="url" placeholder="https://… (PNG/JPG/SVG)" class="hidden" />
+              <input id="tileIconFile" type="file" accept="image/*" class="hidden" />
+              <!-- NEU: manueller Button, falls Auto-Click blockiert wird -->
+              <button class="btn" id="iconPickBtn" type="button" style="display:none;">Datei wählen…</button>
+            </div>
+            <div class="hint">Wenn Favicon nicht passt, eigene Grafik nutzen. Upload wird auf ~128px skaliert.</div>
+          </div>
+        </div>
+      </div>
+      <!-- /ICON SECTION -->
+
+      <div class="hint">Tipp: Favicons werden automatisch geladen, wenn „Auto“ aktiv ist.</div>
+    </form>
+
+    <div class="modal-actions modal-actions--space">
+      <button class="btn danger hidden" id="deleteTileBtn" type="button">Löschen</button>
+      <div class="modal-actions__right">
+        <button class="btn ghost" id="tileCancelBtn" type="button">Abbrechen</button>
+        <button class="btn acc" id="saveTileBtn" type="button">Speichern</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- WOL Modal (mit Geräte-Liste) -->
+  <dialog id="wolModal">
+    <div class="modal-head">
+      <strong>Wake-on-LAN</strong>
+      <button class="btn ghost" id="wolCloseBtn" type="button">Schliessen</button>
+    </div>
+
+    <div class="modal-body wol-split">
+      <div class="wol-list">
+        <div class="wol-list-head">
+          <div>Geräte</div>
+          <button class="btn ghost" id="wolNewBtn" type="button">Neu</button>
+        </div>
+        <div id="wolItems" class="wol-items"></div>
+      </div>
+
+      <form id="wolForm" class="wol-form">
+        <input type="hidden" id="wolIndex" />
+        <div class="field">
+          <label for="wolName">Name</label>
+          <input id="wolName" type="text" placeholder="z. B. NAS" />
+        </div>
+        <div class="field">
+          <label for="wolMac">MAC-Adresse</label>
+          <input id="wolMac" type="text" placeholder="AA:BB:CC:DD:EE:FF" required />
+        </div>
+        <div class="field">
+          <label for="wolAddress">Broadcast / Ziel (optional)</label>
+          <input id="wolAddress" type="text" placeholder="255.255.255.255 oder 192.168.1.255" />
+        </div>
+        <div class="field">
+          <label for="wolPort">Port (optional)</label>
+          <input id="wolPort" type="text" placeholder="9" />
+        </div>
+        <div class="field">
+          <label for="wolEndpoint">Endpoint (optional)</label>
+          <input id="wolEndpoint" type="url" placeholder="http://localhost:8787/wol" />
+        </div>
+        <div class="hint">Endpoint wird pro Gerät gespeichert.</div>
+      </form>
+    </div>
+
+    <div class="modal-actions modal-actions--space">
+      <div class="wol-actions-left">
+        <button class="btn ghost" id="wolSaveBtn" type="button">Gerät speichern</button>
+        <button class="btn danger" id="wolDeleteBtn" type="button">Löschen</button>
+      </div>
+      <div class="wol-actions-right">
+        <div id="wolStatus" class="wol-status"></div>
+        <button class="btn acc" id="sendWolBtn" type="button">Gerät wecken</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Background Modal -->
+  <dialog id="bgModal">
+    <div class="modal-head">
+      <strong>Hintergrund einstellen</strong>
+      <button class="btn ghost" id="bgCloseBtn" type="button">Schliessen</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="bgFile">Bild hochladen (JPG/PNG)</label>
+        <input id="bgFile" type="file" accept="image/*" />
+      </div>
+      <div class="field">
+        <label for="bgSize">Skalierung</label>
+        <select id="bgSize">
+          <option value="cover">Cover (empfohlen)</option>
+          <option value="contain">Contain</option>
+          <option value="auto">Originalgrösse</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="bgPos">Position</label>
+        <select id="bgPos">
+          <option value="center center">Zentriert</option>
+          <option value="top center">Oben</option>
+          <option value="bottom center">Unten</option>
+          <option value="center left">Links</option>
+          <option value="center right">Rechts</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="bgBlur">Weichzeichnen (Blur): <span id="bgBlurVal">0</span>px</label>
+        <input id="bgBlur" type="range" min="0" max="30" step="1" value="0" />
+      </div>
+      <div class="field">
+        <label for="bgDim">Abdunkeln: <span id="bgDimVal">30</span>%</label>
+        <input id="bgDim" type="range" min="0" max="90" step="5" value="30" />
+      </div>
+      <div class="hint">Grosse Bilder werden beim Speichern auf ~1920px Breite skaliert.</div>
+    </div>
+    <div class="modal-actions modal-actions--space">
+      <button class="btn danger" id="bgResetBtn" type="button">Auf Standard zurücksetzen</button>
+      <div class="modal-actions__right">
+        <button class="btn ghost" id="bgCancelBtn" type="button">Abbrechen</button>
+        <button class="btn acc" id="bgSaveBtn" type="button">Speichern</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Theme Modal -->
+  <dialog id="themeModal">
+    <div class="modal-head">
+      <strong>Theme anpassen</strong>
+      <button class="btn ghost" id="themeCloseBtn" type="button">Schliessen</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="thAccent">Akzentfarbe</label>
+        <input id="thAccent" type="color" value="#8c7bff" />
+      </div>
+      <div class="field">
+        <label for="thAccent2">Akzent 2</label>
+        <input id="thAccent2" type="color" value="#27d3a2" />
+      </div>
+      <div class="field">
+        <label for="thBg1">Hintergrund oben (bg1)</label>
+        <input id="thBg1" type="color" value="#0f1226" />
+      </div>
+      <div class="field">
+        <label for="thBg2">Hintergrund unten (bg2)</label>
+        <input id="thBg2" type="color" value="#171a3a" />
+      </div>
+      <div class="field">
+        <label for="thTopbarColor">Topbar-Farbe</label>
+        <input id="thTopbarColor" type="color" value="#0e1135" />
+      </div>
+      <div class="field">
+        <label for="thTopbarOpacity">Topbar-Transparenz: <span id="thTopbarOpacityVal">65</span>%</label>
+        <input id="thTopbarOpacity" type="range" min="0" max="100" step="5" value="65" />
+      </div>
+      <div class="hint">Kacheln übernehmen automatisch Ton & Transparenz der Topbar.</div>
+    </div>
+    <div class="modal-actions modal-actions--space">
+      <button class="btn danger" id="themeResetBtn" type="button">Standard wiederherstellen</button>
+      <div class="modal-actions__right">
+        <button class="btn ghost" id="themeCancelBtn" type="button">Abbrechen</button>
+        <button class="btn acc" id="themeSaveBtn" type="button">Speichern</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
