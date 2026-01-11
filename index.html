@@ -36,6 +36,11 @@
           <small id="dateTxt">–</small> <span id="timeTxt">--:--</span>
         </div>
       </div>
+
+      <!-- NEU: Burger-Button für Mobile -->
+      <button class="btn icon-btn" id="menuToggle" type="button" aria-label="Menü öffnen">
+        ☰
+      </button>
     </div>
 
     <main class="grid" id="grid"></main>
@@ -86,7 +91,7 @@
             <div class="icon-inputs">
               <input id="tileIconUrl" type="url" placeholder="https://… (PNG/JPG/SVG)" class="hidden" />
               <input id="tileIconFile" type="file" accept="image/*" class="hidden" />
-              <!-- NEU: manueller Button, falls Auto-Click blockiert wird -->
+              <!-- Manueller Button, falls Auto-Click blockiert wird -->
               <button class="btn" id="iconPickBtn" type="button" style="display:none;">Datei wählen…</button>
             </div>
             <div class="hint">Wenn Favicon nicht passt, eigene Grafik nutzen. Upload wird auf ~128px skaliert.</div>
